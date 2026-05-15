@@ -11,68 +11,39 @@ PIMDSystem::PIMDSystem(int N, int P, float boxSize, float temp)
     float beta = 1.0f / (kb * temperature);
     omegaP = std::sqrt((float)numBeads) / (beta * hbar);
 
+    // --- PHASE 2: 2-ATOM SANDBOX ---
+    glm::vec3 center(L / 2.0f);
+    float spacing = 1.122f; // Lennard-Jones equilibrium resting distance
 
-    // 1. FCC Lattice Parameters
-    // For Lennard-Jones, the ideal FCC lattice constant 'a' is approx 1.587
-    // This perfectly spaces the nearest neighbors at the 1.122 minimum!
-    float a = 1.587f; 
-    
-    // We place 4 atoms per unit cell
-    int cellsPerSide = std::ceil(std::cbrt(numAtoms / 4.0f)); 
-    
-    float crystalSize = cellsPerSide * a;
-    glm::vec3 offset = glm::vec3((L - crystalSize) / 2.0f);
+    for (int i = 0; i < numAtoms; ++i) {
+        Atom a;
+        // Place Atom 0 slightly left, Atom 1 slightly right
+        glm::vec3 atomCenter = center;
+        if (i == 0) atomCenter.x -= spacing / 2.0f;
+        if (i == 1) atomCenter.x += spacing / 2.0f;
 
-    // The 4 local positions within an FCC unit cell
-    glm::vec3 basis[4] = {
-        glm::vec3(0.0f, 0.0f, 0.0f),
-        glm::vec3(0.5f, 0.5f, 0.0f),
-        glm::vec3(0.5f, 0.0f, 0.5f),
-        glm::vec3(0.0f, 0.5f, 0.5f)
-    };
+        glm::vec3 atomVelocity(0.0f); // Start perfectly calm
 
-    int placedAtoms = 0;
-
-    for (int x = 0; x < cellsPerSide && placedAtoms < numAtoms; ++x) {
-        for (int y = 0; y < cellsPerSide && placedAtoms < numAtoms; ++y) {
-            for (int z = 0; z < cellsPerSide && placedAtoms < numAtoms; ++z) {
-                
-                // Loop through the 4 basis atoms in this specific cell
-                for (int b = 0; b < 4 && placedAtoms < numAtoms; ++b) {
-                    Atom atom;
-                    
-                    glm::vec3 cellCorner = offset + glm::vec3(x * a, y * a, z * a);
-                    glm::vec3 center = cellCorner + (basis[b] * a);
-                    
-                    glm::vec3 atomVelocity(
-                        ((float)rand() / RAND_MAX) - 0.5f,
-                        ((float)rand() / RAND_MAX) - 0.5f,
-                        ((float)rand() / RAND_MAX) - 0.5f
-                    );
-                    atomVelocity *= 0.01f; 
-
-                    for (int k = 0; k < numBeads; ++k) {
-                        Bead bead;
-                        float u = (float)rand() / RAND_MAX;
-                        float v = (float)rand() / RAND_MAX;
-                        float theta = u * 2.0f * 3.14159f;
-                        float phi = std::acos(2.0f * v - 1.0f);
-                        float radius = 0.1f; 
-                        
-                        float bx = radius * std::sin(phi) * std::cos(theta);
-                        float by = radius * std::sin(phi) * std::sin(theta);
-                        float bz = radius * std::cos(phi);
-                        
-                        bead.pos = center + glm::vec3(bx, by, bz);
-                        bead.vel = atomVelocity;
-                        bead.force = glm::vec3(0.0f);
-                        atom.beads.push_back(bead);
-                    }
-                    atoms.push_back(atom);
-                    placedAtoms++;
-                }
-            }
+        for (int k = 0; k < numBeads; ++k) {
+            Bead b;
+            float u = (float)rand() / RAND_MAX;
+            float v = (float)rand() / RAND_MAX;
+            float theta = u * 2.0f * 3.14159f;
+            float phi = std::acos(2.0f * v - 1.0f);
+            
+            // PRE-INFLATE the probability clouds so they instantly overlap
+            float radius = 1.0f; 
+            
+            float bx = radius * std::sin(phi) * std::cos(theta);
+            float by = radius * std::sin(phi) * std::sin(theta);
+            float bz = radius * std::cos(phi);
+            
+            b.pos = atomCenter + glm::vec3(bx, by, bz);
+            b.vel = atomVelocity;
+            b.force = glm::vec3(0.0f);
+            a.beads.push_back(b);
         }
+        atoms.push_back(a);
     }
 }
 
@@ -151,13 +122,70 @@ void PIMDSystem::update(float dt) {
     if (currentKineticEnergy > 0.0001f) {
         float scale = std::sqrt(targetKineticEnergy / currentKineticEnergy);
         // 3. More aggressive thermostat to ensure they keep moving in the huge box
-        float coupling = 0.2f; 
+        // Gentle thermostat for stable quantum phase mixing
+        float coupling = 0.05f;
         scale = 1.0f + coupling * (scale - 1.0f); 
 
         for (auto& atom : atoms) {
             for (auto& b : atom.beads) {
                 b.vel *= scale;
             }
+        }
+    }
+}
+
+void PIMDSystem::attemptWormSwap() {
+    if (numAtoms < 2) return;
+    swapAttempts++;
+
+    // 1. Pick two random atoms
+    int a1 = rand() % numAtoms;
+    int a2 = rand() % numAtoms;
+    while (a1 == a2) a2 = rand() % numAtoms; // Ensure they are different
+
+    // 2. Pick a random slice point (The Cut)
+    int k = rand() % numBeads;
+    int k_next = (k + 1) % numBeads;
+
+    // 3. Calculate the change in Action (Spring Energy)
+    float springK = atoms[a1].mass * omegaP * omegaP; 
+
+    glm::vec3 rA_k = atoms[a1].beads[k].pos;
+    glm::vec3 rA_next = atoms[a1].beads[k_next].pos;
+    
+    glm::vec3 rB_k = atoms[a2].beads[k].pos;
+    glm::vec3 rB_next = atoms[a2].beads[k_next].pos;
+
+    // Current squared distances (Un-swapped)
+    glm::vec3 diffA = rA_k - rA_next;
+    glm::vec3 diffB = rB_k - rB_next;
+    float distCurrent = glm::dot(diffA, diffA) + glm::dot(diffB, diffB);
+
+    // Proposed squared distances (Cross-linked!)
+    glm::vec3 diffCross1 = rA_k - rB_next;
+    glm::vec3 diffCross2 = rB_k - rA_next;
+    float distProposed = glm::dot(diffCross1, diffCross1) + glm::dot(diffCross2, diffCross2);
+
+    float deltaAction = 0.5f * springK * (distProposed - distCurrent);
+
+    // 4. The Metropolis-Hastings Acceptance Criterion
+    bool accept = false;
+    if (deltaAction < 0.0f) {
+        accept = true; // Always accept if it relaxes the springs
+    } else {
+        float prob = std::exp(-deltaAction);
+        float randVal = (float)rand() / RAND_MAX;
+        if (randVal < prob) accept = true; // Accept based on quantum probability
+    }
+
+    // 5. Execute the Topological Swap!
+    if (accept) {
+        swapAcceptances++;
+        // Physically trade all beads from the cut point to the end of the polymer
+        for (int j = k_next; j < numBeads; ++j) {
+            Bead temp = atoms[a1].beads[j];
+            atoms[a1].beads[j] = atoms[a2].beads[j];
+            atoms[a2].beads[j] = temp;
         }
     }
 }

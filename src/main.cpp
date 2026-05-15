@@ -18,10 +18,10 @@ int main() {
     // Start at T = 0.05f to form the perfect crystal lattice
     // Mass = 20.0f (Good inertia), Temp = 0.05f (Cold, but NOT zero!)
     // 108 atoms for a perfect 3x3x3 FCC grid
-    PIMDSystem system(108, 32, 15.0f, 0.05f);
-    
+    PIMDSystem system(2, 640, 8.0f, 0.05f); 
+
     for (int i = 0; i < system.numAtoms; ++i) {
-        system.atoms[i].mass = 1.0f; 
+        system.atoms[i].mass = 1.0f; // Light mass for massive quantum clouds
         system.atoms[i].charge = 0.0f; 
     }
 
@@ -29,19 +29,27 @@ int main() {
 
     while (!glfwWindowShouldClose(window)) {
         // Dynamic Heating
-        if (system.temperature < 100.0f) {
-            system.temperature += 0.1f; 
-            system.omegaP = std::sqrt((float)system.numBeads) * system.temperature;
+        // if (system.temperature < 100.0f) {
+        //     system.temperature += 0.1f; 
+        //     system.omegaP = std::sqrt((float)system.numBeads) * system.temperature;
+        // }
+
+        system.update(0.001f); 
+
+        // --- THE WORM ALGORITHM TRIGGER ---
+        // Attempt a quantum topological swap every frame
+        system.attemptWormSwap();
+
+        // Calculate acceptance rate
+        float swapRate = 0.0f;
+        if (system.swapAttempts > 0) {
+            swapRate = (float)system.swapAcceptances / system.swapAttempts * 100.0f;
         }
 
-        system.update(0.001f);
-
-        // --- NEW REAL-TIME UI ---
-        std::string title = "PIMD Engine | Temp: " + std::to_string(system.temperature).substr(0, 5); 
+        // --- REAL-TIME TOPOLOGY UI ---
+        std::string title = "PIMD Engine | Swaps: " + std::to_string(system.swapAcceptances) + 
+                            " | Rate: " + std::to_string(swapRate).substr(0, 4) + "%"; 
         glfwSetWindowTitle(window, title.c_str());
-        // ------------------------
-        
-        // ... (rest of your camera and rendering code) ... 
 
         glClearColor(0.05f, 0.05f, 0.05f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
@@ -59,14 +67,13 @@ int main() {
         glMatrixMode(GL_MODELVIEW);
         glLoadIdentity();
 
-        // Keep the camera close enough to see the crystal, but far enough to see the gas
+        // Pushed camera in closer to see the two atoms interact
         float time = glfwGetTime();
-        float camX = std::sin(time * 0.2f) * 18.0f; 
-        float camZ = std::cos(time * 0.2f) * 18.0f;
-        
+        float camX = std::sin(time * 0.2f) * 10.0f; 
+        float camZ = std::cos(time * 0.2f) * 10.0f;
         float center = system.L / 2.0f;
         glm::mat4 view = glm::lookAt(
-            glm::vec3(camX + center, center + 3.0f, camZ + center), 
+            glm::vec3(camX + center, center + 2.0f, camZ + center), 
             glm::vec3(center, center, center),                      
             glm::vec3(0.0f, 1.0f, 0.0f)                             
         );
@@ -84,11 +91,12 @@ int main() {
             glVertex3f(L,0,L); glVertex3f(L,L,L); glVertex3f(0,0,L); glVertex3f(0,L,L);
         glEnd();
 
-        // Draw Atoms
+        // Draw Atoms (Modified to clearly show color swapping)
         for (int i = 0; i < system.numAtoms; ++i) {
-            float r = (float)(i % 5) / 5.0f + 0.2f;
-            float g = (float)(i % 7) / 7.0f + 0.2f;
-            float b = (float)(i % 3) / 3.0f + 0.4f;
+            // Atom 0 is heavily Blue, Atom 1 is heavily Red
+            float r = (i == 0) ? 0.2f : 1.0f;
+            float g = 0.3f;
+            float b = (i == 0) ? 1.0f : 0.2f;
             glColor3f(r, g, b);
             
             glBegin(GL_LINES); 

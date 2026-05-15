@@ -28,6 +28,10 @@ public:
 
     PIMDSystem(int N, int P, float boxSize, float temp);
     void update(float dt);
+    // --- Phase 2: Worm Algorithm ---
+    void attemptWormSwap();
+    int swapAttempts = 0;
+    int swapAcceptances = 0;
     
 private:
     void computeForces();
