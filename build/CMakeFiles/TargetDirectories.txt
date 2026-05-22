@@ -1,3 +1,0 @@
-C:/Users/infin/OneDrive/Desktop/bachelor/build/CMakeFiles/QuantumPIMD.dir
-C:/Users/infin/OneDrive/Desktop/bachelor/build/CMakeFiles/edit_cache.dir
-C:/Users/infin/OneDrive/Desktop/bachelor/build/CMakeFiles/rebuild_cache.dir
