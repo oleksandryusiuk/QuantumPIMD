@@ -4,6 +4,8 @@
 #include "engine/PIMDSystem.h"
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
+#include <fstream>
+#include <iostream>
 
 int main() {
     if (!glfwInit()) return -1;
@@ -18,27 +20,48 @@ int main() {
     // Start at T = 0.05f to form the perfect crystal lattice
     // Mass = 20.0f (Good inertia), Temp = 0.05f (Cold, but NOT zero!)
     // 108 atoms for a perfect 3x3x3 FCC grid
-    PIMDSystem system(2, 640, 8.0f, 0.05f); 
-
-    for (int i = 0; i < system.numAtoms; ++i) {
-        system.atoms[i].mass = 1.0f; // Light mass for massive quantum clouds
-        system.atoms[i].charge = 0.0f; 
-    }
+    PIMDSystem system(4, 320, 8.0f, 0.05f);
 
     glEnable(GL_DEPTH_TEST);
 
+    // --- CSV LOGGING SETUP ---
+    std::ofstream csvFile("pimd_thermodynamics.csv");
+    csvFile << "Time,Temperature,Rg_Heavy,Rg_Light,SwapRate\n";
+    
+    float timeElapsed = 0.0f;
+    int frameCounter = 0;
+
     while (!glfwWindowShouldClose(window)) {
-        // Dynamic Heating
-        // if (system.temperature < 100.0f) {
-        //     system.temperature += 0.1f; 
-        //     system.omegaP = std::sqrt((float)system.numBeads) * system.temperature;
-        // }
+        float dt = 0.001f;
 
-        system.update(0.001f); 
+        system.update(dt);
 
-        // --- THE WORM ALGORITHM TRIGGER ---
-        // Attempt a quantum topological swap every frame
-        system.attemptWormSwap();
+        // --- DYNAMIC COOLING (Optional but highly recommended) ---
+        // Slowly decrease the temperature by a tiny fraction every frame 
+        // to sweep from classical gas down to quantum condensate.
+        system.temperature *= 0.9995f; 
+
+        // --- RECORD DATA (Once every 10 frames to avoid giant files) ---
+        timeElapsed += dt;
+        frameCounter++;
+
+        if (frameCounter % 10 == 0) {
+            float rgHeavy = system.getAverageRadiusOfGyration(1.0f);
+            float rgLight = system.getAverageRadiusOfGyration(0.25f);
+            float swapRate = system.getSwapRate();
+
+            csvFile << timeElapsed << "," 
+                    << system.temperature << "," 
+                    << rgHeavy << "," 
+                    << rgLight << "," 
+                    << swapRate << "\n";
+            
+            // Print to console just so you know it's working
+            std::cout << "T: " << system.temperature 
+                      << " | Rg(H): " << rgHeavy 
+                      << " | Rg(L): " << rgLight 
+                      << " | Swaps: " << (swapRate * 100.0f) << "%" << std::endl;
+        }
 
         // Calculate acceptance rate
         float swapRate = 0.0f;
@@ -117,7 +140,7 @@ int main() {
         glfwSwapBuffers(window);
         glfwPollEvents();
     }
-
+    csvFile.close();
     glfwTerminate();
     return 0;
 }

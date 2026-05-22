@@ -32,6 +32,15 @@ public:
     void attemptWormSwap();
     int swapAttempts = 0;
     int swapAcceptances = 0;
+
+    int getSwapAttempts() const { return swapAttempts; }
+    int getSwapAcceptances() const { return swapAcceptances; }
+    
+    float getSwapRate() const { 
+        if (swapAttempts == 0) return 0.0f;
+        return (float)swapAcceptances / swapAttempts; 
+    }
+    float getAverageRadiusOfGyration(float targetMass);
     
 private:
     void computeForces();

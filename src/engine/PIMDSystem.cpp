@@ -45,7 +45,23 @@ PIMDSystem::PIMDSystem(int N, int P, float boxSize, float temp)
         }
         atoms.push_back(a);
     }
+    // ... existing constructor code ...
+    // atoms.push_back(atom);
+    // placedAtoms++;
+    // } } } }
+
+    // --- NEW: ISOTOPE SETUP ---
+    // Alternate masses to observe quantum dispersion differences
+    for (int i = 0; i < numAtoms; ++i) {
+        if (i % 2 == 0) {
+            atoms[i].mass = 1.0f;  // Heavy Isotope (e.g., Bosonic He-4)
+        } else {
+            atoms[i].mass = 0.25f; // Light Isotope (e.g., simulated light mass)
+            // The lighter mass will visibly vibrate more and have a larger "cloud"
+        }
+    }
 }
+
 
 void PIMDSystem::computeForces() {
     for (auto& atom : atoms) {
@@ -100,48 +116,85 @@ void PIMDSystem::computeForces() {
 }
 
 void PIMDSystem::update(float dt) {
+    // 1. Recalculate omegaP so the quantum springs weaken dynamically as the system cools
+    float hbar = 1.0f; 
+    float kb = 1.0f;
+    
+    // Safety check to avoid division by zero near absolute zero
+    if (temperature > 1e-6f) {
+        float beta = 1.0f / (kb * temperature);
+        omegaP = std::sqrt((float)numBeads) / (beta * hbar);
+    } else {
+        omegaP = 0.0f; // Springs die at complete delocalization
+    }
+
+    // 2. Velocity Verlet Step 1: Update positions and first half of velocities
     for (auto& atom : atoms) {
         for (auto& b : atom.beads) {
             b.pos = b.pos + b.vel * dt + 0.5f * (b.force / atom.mass) * dt * dt;
             b.vel += 0.5f * (b.force / atom.mass) * dt;
         }
     }
-
+    
+    // 3. Compute new forces based on updated positions
     computeForces();
 
-    float currentKineticEnergy = 0.0f;
+    // 4. Velocity Verlet Step 2: Update second half of velocities (RESTORED)
     for (auto& atom : atoms) {
         for (auto& b : atom.beads) {
             b.vel += 0.5f * (b.force / atom.mass) * dt;
-            currentKineticEnergy += 0.5f * atom.mass * glm::dot(b.vel, b.vel);
         }
     }
 
-    float targetKineticEnergy = 1.5f * (numAtoms * numBeads) * temperature; 
-    
-    if (currentKineticEnergy > 0.0001f) {
-        float scale = std::sqrt(targetKineticEnergy / currentKineticEnergy);
-        // 3. More aggressive thermostat to ensure they keep moving in the huge box
-        // Gentle thermostat for stable quantum phase mixing
-        float coupling = 0.05f;
-        scale = 1.0f + coupling * (scale - 1.0f); 
+    // 5. LOCALIZED THERMOSTAT (Equipartition Enforcer)
+    // Target kinetic energy for a single atom (all its beads)
+    float targetAtomKE = 1.5f * numBeads * temperature; 
 
-        for (auto& atom : atoms) {
+    for (auto& atom : atoms) {
+        float atomKE = 0.0f;
+        
+        // Calculate the kinetic energy for THIS specific atom
+        for (auto& b : atom.beads) {
+            atomKE += 0.5f * atom.mass * glm::dot(b.vel, b.vel);
+        }
+
+        // Scale only this atom's velocities to match its mass-dependent thermal target
+        if (atomKE > 0.0001f) {
+            float scale = std::sqrt(targetAtomKE / atomKE);
+            
+            // Gentle coupling for stable quantum phase mixing
+            float coupling = 0.1f; 
+            scale = 1.0f + coupling * (scale - 1.0f); 
+
             for (auto& b : atom.beads) {
                 b.vel *= scale;
             }
         }
     }
+    
+    // 6. Attempt multiple swaps per frame to allow the system to explore topologies
+    int swapAttemptsPerFrame = numAtoms * 2; 
+    for(int i = 0; i < swapAttemptsPerFrame; ++i) {
+        attemptWormSwap();
+    }
 }
 
 void PIMDSystem::attemptWormSwap() {
     if (numAtoms < 2) return;
-    swapAttempts++;
-
-    // 1. Pick two random atoms
+    
     int a1 = rand() % numAtoms;
     int a2 = rand() % numAtoms;
-    while (a1 == a2) a2 = rand() % numAtoms; // Ensure they are different
+    
+    // Ensure we picked two different atoms
+    if (a1 == a2) return; 
+
+    // --- CRITICAL PHYSICS FIX: INDISTINGUISHABILITY ---
+    // Bosonic quantum exchange can only occur between identical isotopes!
+    if (std::abs(atoms[a1].mass - atoms[a2].mass) > 0.01f) {
+        return; // Cannot swap a light isotope with a heavy isotope
+    }
+
+    swapAttempts++;
 
     // 2. Pick a random slice point (The Cut)
     int k = rand() % numBeads;
@@ -156,12 +209,10 @@ void PIMDSystem::attemptWormSwap() {
     glm::vec3 rB_k = atoms[a2].beads[k].pos;
     glm::vec3 rB_next = atoms[a2].beads[k_next].pos;
 
-    // Current squared distances (Un-swapped)
     glm::vec3 diffA = rA_k - rA_next;
     glm::vec3 diffB = rB_k - rB_next;
     float distCurrent = glm::dot(diffA, diffA) + glm::dot(diffB, diffB);
 
-    // Proposed squared distances (Cross-linked!)
     glm::vec3 diffCross1 = rA_k - rB_next;
     glm::vec3 diffCross2 = rB_k - rA_next;
     float distProposed = glm::dot(diffCross1, diffCross1) + glm::dot(diffCross2, diffCross2);
@@ -171,21 +222,49 @@ void PIMDSystem::attemptWormSwap() {
     // 4. The Metropolis-Hastings Acceptance Criterion
     bool accept = false;
     if (deltaAction < 0.0f) {
-        accept = true; // Always accept if it relaxes the springs
+        accept = true; 
     } else {
         float prob = std::exp(-deltaAction);
         float randVal = (float)rand() / RAND_MAX;
-        if (randVal < prob) accept = true; // Accept based on quantum probability
+        if (randVal < prob) accept = true; 
     }
 
     // 5. Execute the Topological Swap!
     if (accept) {
         swapAcceptances++;
-        // Physically trade all beads from the cut point to the end of the polymer
         for (int j = k_next; j < numBeads; ++j) {
             Bead temp = atoms[a1].beads[j];
             atoms[a1].beads[j] = atoms[a2].beads[j];
             atoms[a2].beads[j] = temp;
         }
     }
+}
+
+float PIMDSystem::getAverageRadiusOfGyration(float targetMass) {
+    float totalRg = 0.0f;
+    int count = 0;
+
+    for (const auto& atom : atoms) {
+        // Only measure the specific isotope we ask for
+        if (std::abs(atom.mass - targetMass) > 0.01f) continue; 
+
+        // 1. Find the centroid (center of mass) of the ring polymer
+        glm::vec3 centroid(0.0f);
+        for (const auto& b : atom.beads) {
+            centroid += b.pos;
+        }
+        centroid /= (float)numBeads;
+
+        // 2. Calculate the squared distance of each bead from the centroid
+        float rgSq = 0.0f;
+        for (const auto& b : atom.beads) {
+            glm::vec3 diff = b.pos - centroid;
+            rgSq += glm::dot(diff, diff);
+        }
+        
+        totalRg += std::sqrt(rgSq / numBeads);
+        count++;
+    }
+
+    return (count > 0) ? (totalRg / count) : 0.0f;
 }
