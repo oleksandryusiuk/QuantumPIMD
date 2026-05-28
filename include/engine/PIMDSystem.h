@@ -13,7 +13,8 @@ struct Bead {
 struct Atom {
     std::vector<Bead> beads;
     float mass = 1.0f;     
-    float charge = 0.0f;   
+    float charge = 0.0f;
+    bool isBoson; 
 };
 
 class PIMDSystem {

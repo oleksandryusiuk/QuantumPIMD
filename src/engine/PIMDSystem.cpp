@@ -11,18 +11,35 @@ PIMDSystem::PIMDSystem(int N, int P, float boxSize, float temp)
     float beta = 1.0f / (kb * temperature);
     omegaP = std::sqrt((float)numBeads) / (beta * hbar);
 
-    // --- PHASE 2: 2-ATOM SANDBOX ---
-    glm::vec3 center(L / 2.0f);
-    float spacing = 1.122f; // Lennard-Jones equilibrium resting distance
+    // --- PHASE 3: 3D GRID INITIALIZATION ---
+    int particlesPerSide = std::ceil(std::cbrt(numAtoms));
+    float spacing = L / particlesPerSide;
 
     for (int i = 0; i < numAtoms; ++i) {
         Atom a;
-        // Place Atom 0 slightly left, Atom 1 slightly right
-        glm::vec3 atomCenter = center;
-        if (i == 0) atomCenter.x -= spacing / 2.0f;
-        if (i == 1) atomCenter.x += spacing / 2.0f;
+        
+        int xIndex = i % particlesPerSide;
+        int yIndex = (i / particlesPerSide) % particlesPerSide;
+        int zIndex = i / (particlesPerSide * particlesPerSide);
 
-        glm::vec3 atomVelocity(0.0f); // Start perfectly calm
+        glm::vec3 atomCenter(
+            xIndex * spacing + spacing / 2.0f,
+            yIndex * spacing + spacing / 2.0f,
+            zIndex * spacing + spacing / 2.0f
+        );
+
+        // --- NEW: STRATIFIED ISOTOPE SETUP ---
+        // If the atom is spawning in the bottom half of the box, make it a Boson.
+        // If it's in the top half, make it a Fermion.
+        if (atomCenter.y < L / 2.0f) {
+            a.mass = 4.0f;     // Heavy Helium-4
+            a.isBoson = true;  // Will form the superfluid web
+        } else {
+            a.mass = 3.0f;     // Lighter Helium-3
+            a.isBoson = false; // Will remain isolated
+        }
+
+        glm::vec3 atomVelocity(0.0f); 
 
         for (int k = 0; k < numBeads; ++k) {
             Bead b;
@@ -31,8 +48,7 @@ PIMDSystem::PIMDSystem(int N, int P, float boxSize, float temp)
             float theta = u * 2.0f * 3.14159f;
             float phi = std::acos(2.0f * v - 1.0f);
             
-            // PRE-INFLATE the probability clouds so they instantly overlap
-            float radius = 1.0f; 
+            float radius = 0.5f; 
             
             float bx = radius * std::sin(phi) * std::cos(theta);
             float by = radius * std::sin(phi) * std::sin(theta);
@@ -45,21 +61,8 @@ PIMDSystem::PIMDSystem(int N, int P, float boxSize, float temp)
         }
         atoms.push_back(a);
     }
-    // ... existing constructor code ...
-    // atoms.push_back(atom);
-    // placedAtoms++;
-    // } } } }
-
-    // --- NEW: ISOTOPE SETUP ---
-    // Alternate masses to observe quantum dispersion differences
-    for (int i = 0; i < numAtoms; ++i) {
-        if (i % 2 == 0) {
-            atoms[i].mass = 1.0f;  // Heavy Isotope (e.g., Bosonic He-4)
-        } else {
-            atoms[i].mass = 0.25f; // Light Isotope (e.g., simulated light mass)
-            // The lighter mass will visibly vibrate more and have a larger "cloud"
-        }
-    }
+    // Make sure you delete the old "for (int i = 0; i < numAtoms; ++i)" 
+    // isotope loop that used to be right below this!
 }
 
 
@@ -181,17 +184,22 @@ void PIMDSystem::update(float dt) {
 
 void PIMDSystem::attemptWormSwap() {
     if (numAtoms < 2) return;
-    
+        
     int a1 = rand() % numAtoms;
     int a2 = rand() % numAtoms;
     
     // Ensure we picked two different atoms
     if (a1 == a2) return; 
 
-    // --- CRITICAL PHYSICS FIX: INDISTINGUISHABILITY ---
-    // Bosonic quantum exchange can only occur between identical isotopes!
+    // --- NEW: FERMIONIC EXCLUSION ---
+    // Only Bosons can undergo quantum state exchange.
+    if (!atoms[a1].isBoson || !atoms[a2].isBoson) {
+        return; 
+    }
+    
+    // Ensure identical isotopes (they must have the exact same mass)
     if (std::abs(atoms[a1].mass - atoms[a2].mass) > 0.01f) {
-        return; // Cannot swap a light isotope with a heavy isotope
+        return; 
     }
 
     swapAttempts++;
@@ -245,26 +253,44 @@ float PIMDSystem::getAverageRadiusOfGyration(float targetMass) {
     int count = 0;
 
     for (const auto& atom : atoms) {
-        // Only measure the specific isotope we ask for
-        if (std::abs(atom.mass - targetMass) > 0.01f) continue; 
+        if (std::abs(atom.mass - targetMass) > 0.1f) continue; 
 
-        // 1. Find the centroid (center of mass) of the ring polymer
-        glm::vec3 centroid(0.0f);
+        // 1. Calculate centroid using a reference bead to handle periodic boundaries
+        glm::vec3 ref = atom.beads[0].pos;
+        glm::vec3 offset(0.0f);
+        
         for (const auto& b : atom.beads) {
-            centroid += b.pos;
+            glm::vec3 diff = b.pos - ref;
+            // Apply minimum image convention relative to reference bead
+            if (diff.x > L * 0.5f) diff.x -= L;
+            if (diff.x < -L * 0.5f) diff.x += L;
+            if (diff.y > L * 0.5f) diff.y -= L;
+            if (diff.y < -L * 0.5f) diff.y += L;
+            if (diff.z > L * 0.5f) diff.z -= L;
+            if (diff.z < -L * 0.5f) diff.z += L;
+            
+            offset += diff;
         }
-        centroid /= (float)numBeads;
+        glm::vec3 centroid = ref + (offset / (float)numBeads);
 
-        // 2. Calculate the squared distance of each bead from the centroid
+        // 2. Calculate squared distance sum using the same periodic logic
         float rgSq = 0.0f;
         for (const auto& b : atom.beads) {
             glm::vec3 diff = b.pos - centroid;
+            // Apply minimum image convention again for distance
+            if (diff.x > L * 0.5f) diff.x -= L;
+            if (diff.x < -L * 0.5f) diff.x += L;
+            if (diff.y > L * 0.5f) diff.y -= L;
+            if (diff.y < -L * 0.5f) diff.y += L;
+            if (diff.z > L * 0.5f) diff.z -= L;
+            if (diff.z < -L * 0.5f) diff.z += L;
+            
             rgSq += glm::dot(diff, diff);
         }
         
-        totalRg += std::sqrt(rgSq / numBeads);
+        totalRg += std::sqrt(rgSq / (float)numBeads);
         count++;
     }
 
-    return (count > 0) ? (totalRg / count) : 0.0f;
+    return (count > 0) ? (totalRg / (float)count) : 0.0f;
 }

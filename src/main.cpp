@@ -16,11 +16,9 @@ int main() {
     
     if (!gladLoadGLLoader((GLADloadproc)glfwGetProcAddress)) return -1;
 
-    // --- Start in a Deep Freeze ---
-    // Start at T = 0.05f to form the perfect crystal lattice
-    // Mass = 20.0f (Good inertia), Temp = 0.05f (Cold, but NOT zero!)
-    // 108 atoms for a perfect 3x3x3 FCC grid
-    PIMDSystem system(4, 320, 8.0f, 0.05f);
+    // Instantiate 50 atoms with 32 beads each. 
+    // The constructor will automatically divide them into He-4 and He-3.
+    PIMDSystem system(48, 96, 5.0f, 1.0f);
 
     glEnable(GL_DEPTH_TEST);
 
@@ -46,8 +44,8 @@ int main() {
         frameCounter++;
 
         if (frameCounter % 10 == 0) {
-            float rgHeavy = system.getAverageRadiusOfGyration(1.0f);
-            float rgLight = system.getAverageRadiusOfGyration(0.25f);
+            float rgHeavy = system.getAverageRadiusOfGyration(4.0f); // Helium-4
+            float rgLight = system.getAverageRadiusOfGyration(3.0f); // Helium-3
             float swapRate = system.getSwapRate();
 
             csvFile << timeElapsed << "," 
@@ -116,10 +114,14 @@ int main() {
 
         // Draw Atoms (Modified to clearly show color swapping)
         for (int i = 0; i < system.numAtoms; ++i) {
-            // Atom 0 is heavily Blue, Atom 1 is heavily Red
-            float r = (i == 0) ? 0.2f : 1.0f;
-            float g = 0.3f;
-            float b = (i == 0) ? 1.0f : 0.2f;
+            
+            // --- NEW COLOR LOGIC: Color by Isotope Mass ---
+            float r, g, b;
+            if (system.atoms[i].mass > 3.5f) { // Heavy He-4 (Boson)
+                r = 0.2f; g = 0.3f; b = 1.0f;  // Blue
+            } else {                           // Light He-3 (Fermion)
+                r = 1.0f; g = 0.3f; b = 0.2f;  // Red
+            }
             glColor3f(r, g, b);
             
             glBegin(GL_LINES); 
